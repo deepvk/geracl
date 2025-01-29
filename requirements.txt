@@ -6,3 +6,5 @@ torch==2.5.0
 torchmetrics==1.6.1
 transformers==4.47.0
 wandb==0.19.4
+loguru==0.7.3
+PyYAML==6.0.2

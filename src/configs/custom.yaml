@@ -1,0 +1,15 @@
+model:
+  embedder_name: "deepvk/USER-bge-m3"
+  unfreeze_embedder: False
+  scheduler_args:
+    class_path: torch.optim.lr_scheduler.CosineAnnealingLR
+    init_params:
+      T_max: 200
+
+data_module:
+  tokenizer_name: "deepvk/USER-bge-m3"
+
+trainer:
+  max_steps: 12000
+  accelerator: "gpu"
+  val_check_interval: 2000

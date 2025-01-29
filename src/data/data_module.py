@@ -1,9 +1,9 @@
-import logging
 from typing import List, Optional, Tuple
 
 import numpy as np
 import torch
 from datasets import load_dataset
+from loguru import logger
 from numpy import ndarray
 from pytorch_lightning import LightningDataModule
 from pytorch_lightning.utilities.types import EVAL_DATALOADERS, TRAIN_DATALOADERS
@@ -11,10 +11,10 @@ from tokenizers import Tokenizer
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
 
+from src.data.data_processing import generate_classes
+from src.data.data_utils import make_classifier_prompt, prepare_batch
 from src.data.dataset import ZeroShotClassificationDataset
-from src.utils import add_required_tokens, make_classifier_prompt, prepare_batch
-
-_logger = logging.getLogger(__name__)
+from src.utils import add_required_tokens
 
 
 class ZeroShotClassificationDataModule(LightningDataModule):
@@ -29,84 +29,113 @@ class ZeroShotClassificationDataModule(LightningDataModule):
         self,
         batch_size: int = 16,
         val_batch_size: int = 16,
+        num_workers: int = 20,
         tokenizer_name: str = "deepvk/USER-base",
+        config: str = "multiclass",
     ):
         """Data module constructor.
 
         :param batch_size: train batch size;
         :param val_batch_size: validation and test batch size;
+        :param num_workers: Number of workers for data loaders;
         :param tokenizer_name: name of the tokenizer, "deepvk/USER-base" by default.
         """
         super().__init__()
+        if config not in {"multiclass", "multilabel"}:
+            raise ValueError("Invalid DataModule config parameter.")
+        self._config = config
         self._batch_size = batch_size
         self._val_batch_size = val_batch_size
+        self._num_workers = num_workers
         self._tokenizer_name = tokenizer_name
-        _logger.info(f"Downloading and opening '{self._tokenizer_name}' tokenizer")
+        logger.info(f"Downloading and opening '{self._tokenizer_name}' tokenizer")
         self._tokenizer = AutoTokenizer.from_pretrained(self._tokenizer_name)
         self._tokenizer = add_required_tokens(self._tokenizer)
+        self._special_token_ids = {
+            "bos_token": self._tokenizer.bos_token_id,
+            "cls_token": self._tokenizer.cls_token_id,
+            "sep_token": self._tokenizer.sep_token_id,
+            "eos_token": self._tokenizer.eos_token_id,
+        }
 
     def setup(self, stage: Optional[str] = None):
-        _logger.info(f"Downloading and opening 'llama_annotations_ru_c4' dataset")
-        # data = load_dataset('MikhailVyrodov/llama_annotations_ru_c4')
-        train_data = load_dataset("json", data_files="/data/c4_annotations_dataset/first_train.jsonl")
-        val_data = load_dataset("json", data_files="/data/c4_annotations_dataset/first_val.jsonl")
-        test_data = load_dataset("json", data_files="/data/c4_annotations_dataset/first_test.jsonl")
-        data = {
-            "train": train_data["train"],
-            "validation": val_data["train"],
-            "test": test_data["train"],
-        }
-        self._rng = np.random.default_rng()
+        logger.info("Downloading and opening 'deepvk/synthetic-classes' dataset")
+        data = load_dataset("deepvk/synthetic-classes", self._config)
+        train_data = load_dataset("deepvk/synthetic-classes", "original", split="train")
 
         self._datasets = {}
-        for split in ["train", "validation", "test"]:
-            _logger.info(f"Initializing {split} dataset")
+        self._labels = {}
+
+        logger.info("Initializing train dataset")
+        self._datasets["train"] = train_data
+        # ZeroShotClassificationDataset(train_data, self._tokenizer, 'train')
+
+        for split in ["validation", "test"]:
+            logger.info(f"Initializing {split} dataset")
             self._datasets[split] = ZeroShotClassificationDataset(data[split], self._tokenizer)
 
     def train_dataloader(self) -> TRAIN_DATALOADERS:
         return DataLoader(
             self._datasets["train"],
             batch_size=self._batch_size,
-            collate_fn=self._collate_fn,
-            num_workers=20,
+            collate_fn=self._train_collate_fn,
+            num_workers=self._num_workers,
         )
 
     def val_dataloader(self) -> EVAL_DATALOADERS:
         return DataLoader(
             self._datasets["validation"],
             batch_size=self._val_batch_size,
-            collate_fn=self._collate_fn,
-            num_workers=20,
+            collate_fn=self._val_test_collate_fn,
+            num_workers=self._num_workers,
         )
 
     def test_dataloader(self) -> EVAL_DATALOADERS:
         return DataLoader(
             self._datasets["test"],
             batch_size=self._val_batch_size,
-            collate_fn=self._collate_fn,
-            num_workers=20,
+            collate_fn=self._val_test_collate_fn,
+            num_workers=self._num_workers,
         )
 
-    def _collate_fn(self, samples: list[tuple[ndarray, List[ndarray]]]) -> Tuple[torch.Tensor, ...]:
+    def _train_collate_fn(self, samples: list[tuple[ndarray, List[ndarray]]]) -> Tuple[torch.Tensor, ...]:
+        classes = [sample["classes"] for sample in samples]
+        new_classes, positive_labels = generate_classes(classes, self._config)
+        new_samples = [(samples[i]["text"], new_classes[i], positive_labels[i]) for i in range(len(samples))]
+
+        texts = [sample_text for (sample_text, _, _) in new_samples]
+        tokenized_texts = self._tokenizer(texts, add_special_tokens=False).input_ids
+        tokenized_classes = [
+            self._tokenizer(sample_classes, add_special_tokens=False).input_ids
+            for (_, sample_classes, _) in new_samples
+        ]
+
+        new_samples = [(tokenized_texts[i], tokenized_classes[i], positive_labels[i]) for i in range(len(samples))]
+
+        return self._val_test_collate_fn(new_samples)
+
+    def _val_test_collate_fn(self, samples: list[tuple[ndarray, list[ndarray], list[int]]]) -> tuple[torch.Tensor, ...]:
         result_prompts = []
         label_masks = []
+        classes_count = [len(sample_classes) for (_, sample_classes, _) in samples]
+        positive_labels = [sample_positive_labels for (_, _, sample_positive_labels) in samples]
 
-        for input_seq, sample_classes in samples:
-            positives = [sample_classes[0]]
-            negatives = sample_classes[1:]
+        for input_seq, sample_classes, sample_positive_labels in samples:
             result_prompt, label_mask = make_classifier_prompt(
-                input_seq,
-                positives,
-                self._tokenizer,
-                self._rng,
-                negatives,
-                train_flag=True,
+                input_seq, self._special_token_ids, sample_classes, sample_positive_labels
             )
 
             result_prompts.append(result_prompt)
             label_masks.append(label_mask)
 
-        return prepare_batch(result_prompts, label_masks, self._tokenizer)
+        input_ids, attention_mask, classes_mask = prepare_batch(
+            result_prompts,
+            label_masks,
+            self._tokenizer.pad_token_id,
+            self._tokenizer.eos_token_id,
+            self._tokenizer.model_max_length if self._tokenizer.model_max_length else None,
+        )
+        return input_ids, attention_mask, classes_mask, torch.tensor(classes_count), positive_labels
 
     @property
     def tokenizer(self) -> Tokenizer:
