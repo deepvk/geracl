@@ -114,6 +114,34 @@ def generate_classes_multilabel(classes):
     return new_classes
 
 
+def generate_classes_llm_negatives(llm_negatives, positives):
+    new_classes = [[] for _ in range(len(positives))]
+    for i in range(len(positives)):
+        selected_positive = random.choice(positives[i])
+        new_classes[i] = [selected_positive]
+
+    for i in range(len(new_classes)):
+        existing_set = set(new_classes[i]).union(set(positives[i]))  # to ensure uniqueness
+        if new_classes[i][0] not in llm_negatives[i]:
+            break_flag = False
+            for positive_classes in positives:
+                for positive in positive_classes:
+                    if positive not in existing_set:
+                        new_classes[i].append(positive)
+                        break_flag = True
+                        break
+                if break_flag:
+                    break
+            continue
+        negatives = llm_negatives[i][new_classes[i][0]]
+        for negative_class in negatives:
+            if negative_class not in existing_set:
+                new_classes[i].append(negative_class)
+                existing_set.add(negative_class)
+
+    return new_classes
+
+
 def shuffle_classes(classes, positives):
     rng = np.random.default_rng()
     labels = [[] for _ in range(len(classes))]

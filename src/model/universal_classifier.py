@@ -7,6 +7,7 @@ import torch.optim
 from loguru import logger
 from pytorch_lightning import LightningModule
 from pytorch_lightning.utilities.types import STEP_OUTPUT
+from sklearn.metrics import accuracy_score, f1_score
 from torch import Tensor
 from torch.nn.functional import binary_cross_entropy_with_logits
 from torchmetrics import MetricCollection
@@ -31,7 +32,8 @@ class ZeroShotClassifier(LightningModule):
         *,
         unfreeze_embedder: bool = False,
         ffn_dim: int = 2048,
-        ffn_dropout: float = 0.1,
+        ffn_classes_dropout: float = 0.1,
+        ffn_text_dropout: float = 0.1,
         device: str = "cuda",
         tokenizer: PreTrainedTokenizer,
         optimizer_args: dict = None,
@@ -53,14 +55,26 @@ class ZeroShotClassifier(LightningModule):
         self._device = device
         self._token_embedder = AutoModel.from_pretrained(embedder_name).to(self._device)
         self._token_embedder.resize_token_embeddings(len(tokenizer))
-        self._mlp = nn.Sequential(
+
+        self._mlp_classes = nn.Sequential(
             nn.Linear(self._token_embedder.config.hidden_size, ffn_dim),
-            nn.Dropout(ffn_dropout),
+            nn.Dropout(ffn_classes_dropout),
             nn.ReLU(inplace=True),
             nn.Linear(ffn_dim, self._token_embedder.config.hidden_size),
         ).to(self._device)
 
-        self._step_outputs = {f"{split}_loss": [] for split in ["val", "test"]}
+        self._mlp_text = nn.Sequential(
+            nn.Linear(self._token_embedder.config.hidden_size, ffn_dim),
+            nn.Dropout(ffn_text_dropout),
+            nn.ReLU(inplace=True),
+            nn.Linear(ffn_dim, self._token_embedder.config.hidden_size),
+        ).to(self._device)
+
+        self._step_outputs = {
+            f"{split}_{metric}": []
+            for split in ["val", "test", "train"]
+            for metric in ["loss", "predictions", "target"]
+        }
         self._tokenizer = tokenizer
 
         if not unfreeze_embedder:
@@ -71,7 +85,7 @@ class ZeroShotClassifier(LightningModule):
         self._auroc_metric = MetricCollection({f"{split}_auroc": BinaryAUROC() for split in ["train", "val", "test"]})
 
         self._f1_metric = MetricCollection(
-            {f"{split}_f1": BinaryF1Score(threshold=0.1) for split in ["train", "val", "test"]}
+            {f"{split}_binary_f1": BinaryF1Score(threshold=0.1) for split in ["train", "val", "test"]}
         )
 
         self._optimizer_args = optimizer_args if optimizer_args is not None else None
@@ -83,7 +97,9 @@ class ZeroShotClassifier(LightningModule):
         :param scheduler_cls: PyTorch scheduler class, e.g. `torch.optim.lr_scheduler.LambdaLR`.
                                 If `None`, then constant lr.
         """
-        parameters = chain(self._token_embedder.parameters(), self._mlp.parameters())
+        parameters = chain(
+            self._token_embedder.parameters(), self._mlp_classes.parameters(), self._mlp_text.parameters()
+        )
 
         if self._optimizer_args:
             module_name, class_name = self._optimizer_args["class_path"].rsplit(".", 1)
@@ -115,12 +131,13 @@ class ZeroShotClassifier(LightningModule):
         mask = classes_mask == -3
         masked_values = embeddings * mask.unsqueeze(-1)
         num_filtered = mask.sum(dim=1)
-        text_embeddings = masked_values.sum(dim=1) / num_filtered.unsqueeze(-1)  # [batch size; embed dim]
+        text_embeddings = masked_values.sum(dim=1) / num_filtered.unsqueeze(-1)
+        text_embeddings = self._mlp_text(text_embeddings)
         return text_embeddings
 
     def _get_classes_embeddings(
         self, embeddings: torch.Tensor, classes_mask: torch.Tensor, classes_count: torch.Tensor
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, ...]:
         bs, _ = classes_mask.shape
 
         mlp_input = []
@@ -139,13 +156,12 @@ class ZeroShotClassifier(LightningModule):
                 class_mean = emb[start_idx : end_idx + 2].mean(dim=0)
                 sample_class_embeddings.append(class_mean)
 
-            sample_class_embeddings = torch.stack(
-                sample_class_embeddings, dim=0
-            )  # [classes count in sample; embed dim]
+            sample_class_embeddings = torch.stack(sample_class_embeddings, dim=0)
             mlp_input += sample_class_embeddings
 
-        mlp_input = torch.stack(mlp_input)  # [all classes in batch; embed dim]
-        classes_embeddings = self._mlp(mlp_input.to(self._device))  # [all classes in batch; embed dim]
+        mlp_input = torch.stack(mlp_input)
+        # [all_classes_in_batch, embedding_dim]
+        classes_embeddings = self._mlp_classes(mlp_input.to(self._device))
 
         return classes_embeddings
 
@@ -156,23 +172,23 @@ class ZeroShotClassifier(LightningModule):
         :param input_ids: [batch size; seq len] -- batch with pretokenized texts.
         :param attention_mask: [batch size; seq len] -- attention mask with 0 for padding tokens.
         :param classes_mask: [batch size; seq len] - labels of each token.
-        :return: [all classes in batch] -- logits of classifier for each class in batch.
+        :return: [] -- .
         """
-        # [batch size; seq len; embed dim]
-        embeddings = self._token_embedder(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state
-        text_embeddings = self._get_text_embeddings(embeddings, classes_mask)  # [batch size; embed dim]
-        classes_embeddings = self._get_classes_embeddings(
-            embeddings, classes_mask, classes_count
-        )  # [all classes in batch; embed dim]
+        bs, seq_len = attention_mask.shape
+        # print(seq_len)
 
-        # [all classes in batch; embed dim]
+        embeddings = self._token_embedder(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state
+        text_embeddings = self._get_text_embeddings(embeddings, classes_mask)
+        classes_embeddings = self._get_classes_embeddings(embeddings, classes_mask, classes_count)
+
+        # [all_classes_in_batch, embedding_dim]
         wide_text_embeddings = torch.zeros((classes_embeddings.shape[0], text_embeddings.shape[1])).to(self._device)
         idx = 0
         for i, sample_class_count in enumerate(classes_count):
             wide_text_embeddings[idx : (idx + sample_class_count), :] = text_embeddings[i]
             idx += sample_class_count
 
-        similarities = torch.sum(classes_embeddings * wide_text_embeddings, dim=-1)  # [all classes in batch]
+        similarities = torch.sum(classes_embeddings * wide_text_embeddings, dim=-1)
 
         return similarities
 
@@ -191,12 +207,13 @@ class ZeroShotClassifier(LightningModule):
         """
 
         input_ids, attention_mask, classes_mask, classes_count, positive_classes = batch
+        bs = len(input_ids)
 
         forward_batch = input_ids, attention_mask, classes_mask, classes_count
 
-        similarities = self.forward(*forward_batch)  # [all classes in batch]
+        similarities = self.forward(*forward_batch)
 
-        target = torch.zeros(similarities.shape[0]).to(self._device)  # [all classes in batch]
+        target = torch.zeros(similarities.shape[0]).to(self._device)
         idx = 0
         for i, sample_class_count in enumerate(classes_count):
             for positive_class in positive_classes[i]:
@@ -209,9 +226,33 @@ class ZeroShotClassifier(LightningModule):
             if split != "train":
                 self._step_outputs[f"{split}_loss"].append(batch_loss.item())
 
+            class_names = [[] for _ in range(bs)]
+            for i in range(bs):
+                sample_classes_mask = classes_mask[i]
+                for label in range(classes_count[i]):
+                    positions = torch.nonzero(sample_classes_mask == label, as_tuple=True)[0]
+                    start_idx = positions.min().item()
+                    end_idx = positions.max().item()
+
+                    class_tokens = input_ids[i][start_idx : end_idx + 1]
+                    class_names[i].append(self._tokenizer.decode(class_tokens))
+
+            predicted_classes = []
+            idx = 0
+            for i in range(bs):
+                predicted_class = similarities[idx : (idx + classes_count[i])].argmax()
+                predicted_class = class_names[i][predicted_class]
+                predicted_classes.append(predicted_class)
+                idx += classes_count[i]
+
+            positive_classes_names = [class_names[i][pos_idx[0]] for i, pos_idx in enumerate(positive_classes)]
+
+            self._step_outputs[f"{split}_predictions"] += predicted_classes
+            self._step_outputs[f"{split}_target"] += positive_classes_names
+
             probs = torch.sigmoid(similarities)
             batch_auroc = self._auroc_metric[f"{split}_auroc"](probs, target)
-            batch_f1 = self._f1_metric[f"{split}_f1"](probs, target)
+            batch_f1 = self._f1_metric[f"{split}_binary_f1"](probs, target)
 
         if split == "train":
             self.log_dict(
@@ -230,13 +271,22 @@ class ZeroShotClassifier(LightningModule):
         epoch_auroc = self._auroc_metric[f"{split}_auroc"].compute()
         self._auroc_metric[f"{split}_auroc"].reset()
 
-        epoch_f1 = self._f1_metric[f"{split}_f1"].compute()
-        self._f1_metric[f"{split}_f1"].reset()
+        epoch_binary_f1 = self._f1_metric[f"{split}_binary_f1"].compute()
+        self._f1_metric[f"{split}_binary_f1"].reset()
+
+        y_true = self._step_outputs[f"{split}_target"]
+        y_pred = self._step_outputs[f"{split}_predictions"]
+        accuracy = accuracy_score(y_true, y_pred)
+        self.log(f"{split}/epoch_accuracy", accuracy)
+
+        if split in {"val", "test"}:
+            micro_f1 = f1_score(y_true, y_pred, average="micro")
+            self.log(f"{split}/epoch_micro_f1", micro_f1)
 
         self.log_dict(
             {
                 f"{split}/epoch_auroc": epoch_auroc,
-                f"{split}/epoch_f1": epoch_f1,
+                f"{split}/epoch_binary_f1": epoch_binary_f1,
             }
         )
 
@@ -251,16 +301,22 @@ class ZeroShotClassifier(LightningModule):
 
     def on_train_epoch_end(self):
         self._report_metrics("train")
+        self._step_outputs["train_predictions"].clear()
+        self._step_outputs["train_target"].clear()
 
     def on_validation_epoch_end(self):
         self._report_metrics("val", self._step_outputs["val_loss"])
 
         self._step_outputs["val_loss"].clear()
+        self._step_outputs["val_predictions"].clear()
+        self._step_outputs["val_target"].clear()
 
     def on_test_epoch_end(self):
         self._report_metrics("test", self._step_outputs["test_loss"])
 
         self._step_outputs["test_loss"].clear()
+        self._step_outputs["test_predictions"].clear()
+        self._step_outputs["test_target"].clear()
 
     def validation_step(self, batch: Tuple[Tensor, ...], batch_idx: int) -> STEP_OUTPUT:  # type: ignore
         return self.shared_step(batch, "val")
