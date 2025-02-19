@@ -165,6 +165,15 @@ def shuffle_classes(classes, positives):
     return classes, new_labels
 
 
+def generate_classes_task_creation(batch):
+    new_classes = [[] for _ in range(len(batch))]
+    for i in range(len(batch)):
+        negative_idx = random.randint(0, 4)
+        new_classes[i] = batch[i][f"negatives_{negative_idx}"]
+
+    return new_classes
+
+
 def generate_classes(classes: list, config: str):
     if config == "multiclass":
         new_classes = generate_classes_multiclass(classes)

@@ -1,6 +1,5 @@
 from typing import List, Optional, Tuple
 
-import pandas as pd
 import torch
 from datasets import load_dataset
 from loguru import logger
@@ -11,7 +10,12 @@ from tokenizers import Tokenizer
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
 
-from src.data.data_processing import generate_classes, generate_classes_llm_negatives, shuffle_classes
+from src.data.data_processing import (
+    generate_classes,
+    generate_classes_llm_negatives,
+    generate_classes_task_creation,
+    shuffle_classes,
+)
 from src.data.data_utils import make_classifier_prompt, prepare_batch
 from src.data.dataset import ZeroShotClassificationDataset
 from src.utils import add_required_tokens
@@ -31,7 +35,7 @@ class ZeroShotClassificationDataModule(LightningDataModule):
         val_batch_size: int = 16,
         num_workers: int = 20,
         tokenizer_name: str = "deepvk/USER-base",
-        config: str = "new_negatives",
+        config: str = "task_creation_negatives",
     ):
         """Data module constructor.
 
@@ -41,7 +45,7 @@ class ZeroShotClassificationDataModule(LightningDataModule):
         :param tokenizer_name: name of the tokenizer, "deepvk/USER-base" by default.
         """
         super().__init__()
-        if config not in {"multiclass", "multilabel", "llm_negatives"}:
+        if config not in {"multiclass", "multilabel", "llm_negatives", "task_creation_negatives"}:
             raise ValueError("Invalid DataModule config parameter.")
         self._config = config
         self._batch_size = batch_size
@@ -60,12 +64,11 @@ class ZeroShotClassificationDataModule(LightningDataModule):
 
     def setup(self, stage: Optional[str] = None):
         logger.info("Downloading and opening 'deepvk/synthetic_classes' dataset")
-        data = load_dataset("deepvk/synthetic_classes", self._config)
-        train_data = load_dataset("deepvk/synthetic_classes", "filtered_train_with_idx", split="train")
+        data = load_dataset("deepvk/synthetic-classes", self._config)
+        train_data = load_dataset("deepvk/synthetic-classes", "task_creation_negatives_train", split="train")
 
         self._datasets = {}
         self._labels = {}
-        self._train_negatives = pd.read_json("/data/negatives/llm_negatives/train.jsonl", lines=True)
 
         self._datasets["train"] = train_data
 
@@ -77,7 +80,7 @@ class ZeroShotClassificationDataModule(LightningDataModule):
         return DataLoader(
             self._datasets["train"],
             batch_size=self._batch_size,
-            collate_fn=self._llm_negatives_train_collate_fn,
+            collate_fn=self._task_creation_train_collate_fn,
             num_workers=self._num_workers,
         )
 
@@ -96,6 +99,23 @@ class ZeroShotClassificationDataModule(LightningDataModule):
             collate_fn=self._val_test_collate_fn,
             num_workers=self._num_workers,
         )
+
+    def _task_creation_train_collate_fn(self, samples) -> Tuple[torch.Tensor, ...]:
+        new_classes = generate_classes_task_creation(samples)
+
+        positive_classes = [[sample_classes[0]] for sample_classes in new_classes]
+        new_classes, positive_labels = shuffle_classes(new_classes, positive_classes)
+        new_samples = [(samples[i]["text"], new_classes[i], positive_labels[i]) for i in range(len(samples))]
+        texts = [sample_text for (sample_text, _, _) in new_samples]
+        tokenized_texts = self._tokenizer(texts, add_special_tokens=False).input_ids
+        tokenized_classes = [
+            self._tokenizer(sample_classes, add_special_tokens=False).input_ids
+            for (_, sample_classes, _) in new_samples
+        ]
+
+        new_samples = [(tokenized_texts[i], tokenized_classes[i], positive_labels[i]) for i in range(len(samples))]
+
+        return self._val_test_collate_fn(new_samples)
 
     def _llm_negatives_train_collate_fn(self, samples) -> Tuple[torch.Tensor, ...]:
         positive_classes = [sample["classes"] for sample in samples]

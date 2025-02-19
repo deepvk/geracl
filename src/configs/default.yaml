@@ -1,7 +1,6 @@
 model:
   embedder_name: "deepvk/USER-base"
   ffn_dim: 2048
-  ffn_dropout: 0.1
   device: "cuda"
   unfreeze_embedder: False
 
@@ -13,7 +12,7 @@ data_module:
   config: "multiclass"
 
 trainer:
-  max_steps: 200
+#  max_steps: 200
   accelerator: "gpu"
   val_check_interval: 100
   gradient_clip_val: 0.0

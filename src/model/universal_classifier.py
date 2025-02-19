@@ -1,3 +1,5 @@
+import math
+from functools import partial
 from itertools import chain
 from typing import Tuple
 
@@ -13,6 +15,24 @@ from torch.nn.functional import binary_cross_entropy_with_logits
 from torchmetrics import MetricCollection
 from torchmetrics.classification import BinaryAUROC, BinaryF1Score
 from transformers import AutoModel, PreTrainedTokenizer
+
+warmup_steps = 1000
+
+
+def linear_lambda(current_step: int, total_steps: int):
+    if current_step < warmup_steps:
+        return current_step / warmup_steps
+    else:
+        progress = float(current_step - warmup_steps) / float(total_steps - warmup_steps)
+        return max(0.0, (1.0 - progress))
+
+
+def cosine_lambda(current_step: int, total_steps: int):
+    if current_step < warmup_steps:
+        return current_step / warmup_steps
+    else:
+        progress = float(current_step - warmup_steps) / float(max(1, total_steps - warmup_steps))
+        return 0.5 * (1 + math.cos(math.pi * progress))
 
 
 class ZeroShotClassifier(LightningModule):
@@ -111,9 +131,16 @@ class ZeroShotClassifier(LightningModule):
         if self._scheduler_args is None:
             return optimizer
 
-        module_name, class_name = self._scheduler_args["class_path"].rsplit(".", 1)
-        scheduler_cls = getattr(__import__(module_name, fromlist=[class_name]), class_name)
-        lr_scheduler = scheduler_cls(optimizer, **self._scheduler_args["init_params"])
+        if self._scheduler_args["scheduler"] == "linear":
+            linear_lambda_with_total_steps = partial(linear_lambda, total_steps=self._scheduler_args["total_steps"])
+            lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=linear_lambda_with_total_steps)
+        else:
+            cosine_lambda_with_total_steps = partial(cosine_lambda, total_steps=self._scheduler_args["total_steps"])
+            lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=cosine_lambda_with_total_steps)
+
+        # module_name, class_name = self._scheduler_args["class_path"].rsplit(".", 1)
+        # scheduler_cls = getattr(__import__(module_name, fromlist=[class_name]), class_name)
+        # lr_scheduler = scheduler_cls(optimizer, **self._scheduler_args["init_params"])
         return {
             "optimizer": optimizer,
             "lr_scheduler": {
