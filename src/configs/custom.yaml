@@ -7,6 +7,8 @@ model:
   unfreeze_embedder: True
   optimizer_args:
      class_path: torch.optim.AdamW
+     init_params:
+        lr: 0.000005
 
 data_module:
   tokenizer_name: "deepvk/USER-bge-m3"

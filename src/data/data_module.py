@@ -36,6 +36,7 @@ class ZeroShotClassificationDataModule(LightningDataModule):
         num_workers: int = 20,
         tokenizer_name: str = "deepvk/USER-base",
         config: str = "task_creation_negatives",
+        model_max_length: int = None,
     ):
         """Data module constructor.
 
@@ -55,6 +56,8 @@ class ZeroShotClassificationDataModule(LightningDataModule):
         logger.info(f"Downloading and opening '{self._tokenizer_name}' tokenizer")
         self._tokenizer = AutoTokenizer.from_pretrained(self._tokenizer_name)
         self._tokenizer = add_required_tokens(self._tokenizer)
+        if model_max_length is not None:
+            self._tokenizer.model_max_length = model_max_length
         self._special_token_ids = {
             "bos_token": self._tokenizer.bos_token_id,
             "cls_token": self._tokenizer.cls_token_id,

@@ -18,7 +18,7 @@ sweep_configuration = {
         "goal": "maximize",
     },
     "parameters": {
-        "max_lr": {"values": [1e-6, 5e-6, 1e-5, 5e-5, 1e-4]},
+        "max_lr": {"values": [1e-7, 5e-6, 1e-6, 5e-6, 1e-5, 5e-5]},
         "batch_size": {"values": [16]},
         "scheduler": {"values": ["linear", "cosine"]},
         "max_epochs": {"values": [4, 6, 10]},
@@ -34,7 +34,7 @@ def train_sweep():
 
     seed = 7
     run = wandb.init(dir=config["other"]["wandb_dir"])
- 
+
     # Get hyperparameters from sweep
     sweep_config = wandb.config
 
@@ -64,7 +64,7 @@ def train_sweep():
 
     data_module = ZeroShotClassificationDataModule()
     data_module = ZeroShotClassificationDataModule(**config["data_module"])
-    model = ZeroShotClassifier(**config["model"], tokenizer=data_module.tokenizer)
+    model = ZeroShotClassifier(**config["model"], tokenizer_len=len(data_module.tokenizer))
 
     trainer = Trainer(
         **config["trainer"],

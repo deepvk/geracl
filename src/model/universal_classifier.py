@@ -14,7 +14,7 @@ from torch import Tensor
 from torch.nn.functional import binary_cross_entropy_with_logits
 from torchmetrics import MetricCollection
 from torchmetrics.classification import BinaryAUROC, BinaryF1Score
-from transformers import AutoModel, PreTrainedTokenizer
+from transformers import AutoModel
 
 warmup_steps = 1000
 
@@ -55,7 +55,7 @@ class ZeroShotClassifier(LightningModule):
         ffn_classes_dropout: float = 0.1,
         ffn_text_dropout: float = 0.1,
         device: str = "cuda",
-        tokenizer: PreTrainedTokenizer,
+        tokenizer_len: int,
         optimizer_args: dict = None,
         scheduler_args: dict = None,
     ):
@@ -65,7 +65,7 @@ class ZeroShotClassifier(LightningModule):
         :param ffn_dim: hidden dimension of mlp layer.
         :param ffn_dropout: dropout of mlp layer.
         :param device: name of device to train the model on.
-        :param tokenizer: Tokenizer object of backbone model.
+        :param tokenizer_len: Number of tokens in tokenizer.
         :param optimizer_args: Dict with arguments to initalize optimizer.
         :param scheduler_args: Dict with arguments to initalize scheduler.
         """
@@ -74,7 +74,7 @@ class ZeroShotClassifier(LightningModule):
 
         self._device = device
         self._token_embedder = AutoModel.from_pretrained(embedder_name).to(self._device)
-        self._token_embedder.resize_token_embeddings(len(tokenizer))
+        self._token_embedder.resize_token_embeddings(tokenizer_len)
 
         self._mlp_classes = nn.Sequential(
             nn.Linear(self._token_embedder.config.hidden_size, ffn_dim),
@@ -95,7 +95,6 @@ class ZeroShotClassifier(LightningModule):
             for split in ["val", "test", "train"]
             for metric in ["loss", "predictions", "target"]
         }
-        self._tokenizer = tokenizer
 
         if not unfreeze_embedder:
             logger.info(f"Freezing embedding model: {self._token_embedder.__class__.__name__}")
@@ -124,7 +123,10 @@ class ZeroShotClassifier(LightningModule):
         if self._optimizer_args:
             module_name, class_name = self._optimizer_args["class_path"].rsplit(".", 1)
             optimizer_cls = getattr(__import__(module_name, fromlist=[class_name]), class_name)
-            optimizer = optimizer_cls(parameters, **self._optimizer_args["init_params"])
+            if "init_params" in self._optimizer_args:
+                optimizer = optimizer_cls(parameters, **self._optimizer_args["init_params"])
+            else:
+                optimizer = optimizer_cls(parameters)
         else:
             optimizer = torch.optim.AdamW(parameters)
 
@@ -167,8 +169,10 @@ class ZeroShotClassifier(LightningModule):
     ) -> tuple[torch.Tensor, ...]:
         bs, _ = classes_mask.shape
 
-        mlp_input = []
-
+        mlp_input = torch.empty(
+            (classes_count.sum(), embeddings.shape[-1]), dtype=torch.float, device=embeddings.device
+        )
+        idx = 0
         for i in range(bs):
             sample_classes_mask = classes_mask[i]
             emb = embeddings[i]
@@ -179,14 +183,14 @@ class ZeroShotClassifier(LightningModule):
                 start_idx = positions.min().item()
                 end_idx = positions.max().item()
 
-                # +2 because we should include token on end_idx position and the [CLS] token after it
-                class_mean = emb[start_idx : end_idx + 2].mean(dim=0)
+                # +1 because we should include token on end_idx position
+                class_mean = emb[start_idx : end_idx + 1].mean(dim=0)
                 sample_class_embeddings.append(class_mean)
 
             sample_class_embeddings = torch.stack(sample_class_embeddings, dim=0)
-            mlp_input += sample_class_embeddings
+            mlp_input[idx : (idx + classes_count[i])] = sample_class_embeddings
+            idx += classes_count[i]
 
-        mlp_input = torch.stack(mlp_input)
         # [all_classes_in_batch, embedding_dim]
         classes_embeddings = self._mlp_classes(mlp_input.to(self._device))
 
@@ -209,11 +213,7 @@ class ZeroShotClassifier(LightningModule):
         classes_embeddings = self._get_classes_embeddings(embeddings, classes_mask, classes_count)
 
         # [all_classes_in_batch, embedding_dim]
-        wide_text_embeddings = torch.zeros((classes_embeddings.shape[0], text_embeddings.shape[1])).to(self._device)
-        idx = 0
-        for i, sample_class_count in enumerate(classes_count):
-            wide_text_embeddings[idx : (idx + sample_class_count), :] = text_embeddings[i]
-            idx += sample_class_count
+        wide_text_embeddings = torch.repeat_interleave(text_embeddings, classes_count, dim=0)
 
         similarities = torch.sum(classes_embeddings * wide_text_embeddings, dim=-1)
 
@@ -253,29 +253,15 @@ class ZeroShotClassifier(LightningModule):
             if split != "train":
                 self._step_outputs[f"{split}_loss"].append(batch_loss.item())
 
-            class_names = [[] for _ in range(bs)]
-            for i in range(bs):
-                sample_classes_mask = classes_mask[i]
-                for label in range(classes_count[i]):
-                    positions = torch.nonzero(sample_classes_mask == label, as_tuple=True)[0]
-                    start_idx = positions.min().item()
-                    end_idx = positions.max().item()
-
-                    class_tokens = input_ids[i][start_idx : end_idx + 1]
-                    class_names[i].append(self._tokenizer.decode(class_tokens))
-
             predicted_classes = []
             idx = 0
             for i in range(bs):
-                predicted_class = similarities[idx : (idx + classes_count[i])].argmax()
-                predicted_class = class_names[i][predicted_class]
-                predicted_classes.append(predicted_class)
+                predicted_class_idx = similarities[idx : (idx + classes_count[i])].argmax()
+                predicted_classes.append(predicted_class_idx)
                 idx += classes_count[i]
 
-            positive_classes_names = [class_names[i][pos_idx[0]] for i, pos_idx in enumerate(positive_classes)]
-
-            self._step_outputs[f"{split}_predictions"] += predicted_classes
-            self._step_outputs[f"{split}_target"] += positive_classes_names
+            self._step_outputs[f"{split}_predictions"] += [pred_class.to("cpu") for pred_class in predicted_classes]
+            self._step_outputs[f"{split}_target"] += positive_classes
 
             probs = torch.sigmoid(similarities)
             batch_auroc = self._auroc_metric[f"{split}_auroc"](probs, target)
@@ -303,12 +289,13 @@ class ZeroShotClassifier(LightningModule):
 
         y_true = self._step_outputs[f"{split}_target"]
         y_pred = self._step_outputs[f"{split}_predictions"]
-        accuracy = accuracy_score(y_true, y_pred)
+        y_true_multiclass = [true_classes[0] for true_classes in y_true]
+        accuracy = accuracy_score(y_true_multiclass, y_pred)
         self.log(f"{split}/epoch_accuracy", accuracy)
 
-        if split in {"val", "test"}:
-            micro_f1 = f1_score(y_true, y_pred, average="micro")
-            self.log(f"{split}/epoch_micro_f1", micro_f1)
+        # if split in {"val", "test"}:
+        #    micro_f1 = f1_score(y_true, y_pred, average="micro")
+        #    self.log(f"{split}/epoch_micro_f1", micro_f1)
 
         self.log_dict(
             {

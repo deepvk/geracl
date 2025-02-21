@@ -14,6 +14,7 @@ data_module:
   num_workers: 20
   tokenizer_name: "deepvk/USER-bge-m3"
   config: "task_creation_negatives"
+  model_max_length: 1100
 
 trainer:
 #  max_steps: 200

@@ -59,9 +59,7 @@ def prepare_batch(
 ) -> tuple[torch.Tensor, ...]:
     batch_size = len(result_prompts)
     max_len = max(len(res_prompt) for res_prompt in result_prompts)
-    max_len = min(max_len, 1100)
     if model_max_length is not None:
-        model_max_length = model_max_length
         max_len = min(max_len, model_max_length)
 
     input_ids = torch.full((batch_size, max_len), pad_token_id, dtype=torch.long)
@@ -72,7 +70,6 @@ def prepare_batch(
         result_prompt = result_prompts[i]
         label_mask = classes_masks[i]
         c_len = len(result_prompt)
-        c_len = min(c_len, 1100)
         if model_max_length is not None:
             c_len = min(c_len, model_max_length)
             result_prompt = result_prompt[:c_len]

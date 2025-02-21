@@ -64,9 +64,8 @@ if __name__ == "__main__":
     )
     lr_logger = LearningRateMonitor("step")
 
-    data_module = ZeroShotClassificationDataModule()
     data_module = ZeroShotClassificationDataModule(**config["data_module"])
-    model = ZeroShotClassifier(**config["model"], tokenizer=data_module.tokenizer)
+    model = ZeroShotClassifier(**config["model"], tokenizer_len=len(data_module.tokenizer))
 
     trainer = Trainer(
         **config["trainer"],
