@@ -1,0 +1,29 @@
+model:
+  embedder_name: "deepvk/USER-bge-m3"
+  ffn_dim: 2048
+  ffn_classes_dropout: 0.3
+  ffn_text_dropout: 0.3
+  device: "cuda"
+  unfreeze_embedder: True
+  optimizer_args:
+     class_path: torch.optim.AdamW
+
+data_module:
+  batch_size: 16
+  val_batch_size: 16
+  num_workers: 20
+  tokenizer_name: "deepvk/USER-bge-m3"
+  config: "task_creation_negatives"
+  model_max_length: 1100
+
+trainer:
+#  max_steps: 200
+  accelerator: "gpu"
+  val_check_interval: 5810
+  gradient_clip_val: 0.0
+  log_every_n_steps: 50
+
+other:
+  wandb_project: "universal_classifier"
+  checkpoints_dir: "/data/checkpoints/sweeps"
+  wandb_dir: "data/wandb"

@@ -1,0 +1,184 @@
+import random
+from collections import Counter
+
+import numpy as np
+
+
+def random_derangement(n):
+    """
+    Return a random derangement of the list [0, 1, ..., n-1].
+    That is, a permutation p such that p[i] != i for all i.
+    If n=1, no derangement is possible; return [0] as a fallback.
+    """
+    if n == 1:
+        return [0]
+
+    indices = list(range(n))
+    while True:
+        random.shuffle(indices)
+        # Check if this shuffle has no fixed points
+        if all(indices[i] != i for i in range(n)):
+            return indices
+
+
+def generate_classes_multiclass(classes):
+    flat_classes = [item for sample_classes in classes for item in sample_classes]
+    frequency_counter = Counter(flat_classes)
+    new_classes = [[] for _ in range(len(classes))]
+    weighted_classes = list(frequency_counter.elements())
+    negatives_count = [random.randint(1, 3) for _ in range(len(classes))]
+
+    for i in range(len(classes)):
+        selected_positive = random.choice(classes[i])
+        new_classes[i] = [selected_positive]
+
+    derangement = random_derangement(len(classes))
+
+    fixed = True
+    max_attempts = 100
+    attempts = 0
+
+    while True:
+        fixed = True
+        for i in range(len(classes)):
+            negative_index = derangement[i]
+            if new_classes[i][0] in classes[negative_index]:
+                # We have a collision: the item for i is the same as for j
+                # Re-pick a new random item for i.
+                new_item = random.choice(classes[i])
+                tries = 0
+                while new_item in classes[negative_index] and tries < max_attempts:
+                    new_item = random.choice(classes[i])
+                    tries += 1
+                new_classes[i][0] = new_item
+                fixed = False
+        attempts += 1
+        # Break if no collisions or we tried too many times
+        if fixed or attempts >= max_attempts:
+            if attempts >= max_attempts:
+                # print(classes)
+                raise Exception(
+                    "Could not distribute one positive class from each sample to different samples without repetition of classes."
+                )
+            break
+
+    for i in range(len(classes)):
+        new_classes[derangement[i]].append(new_classes[i][0])
+
+    for i in range(len(new_classes)):
+        existing_set = set(new_classes[i]).union(set(classes[i]))  # to ensure uniqueness
+
+        # Pick 'classes_count[i]' number of classes from weighted_classes, skipping duplicates
+        added = 0
+        while added < negatives_count[i]:
+            candidate = random.choice(weighted_classes)
+            if candidate not in existing_set:
+                new_classes[i].append(candidate)
+                existing_set.add(candidate)
+                added += 1
+    return new_classes
+
+
+def generate_classes_multilabel(classes):
+    flat_classes = [item for sample_classes in classes for item in sample_classes]
+    frequency_counter = Counter(flat_classes)
+    new_classes = [[] for _ in range(len(classes))]
+    weighted_classes = list(frequency_counter.elements())
+    positives_count = [random.randint(2, 3) for _ in range(len(classes))]
+    negatives_count = [random.randint(2, 3) for _ in range(len(classes))]
+    for i in range(len(classes)):
+        added = 0
+        existing_set = set()
+        if len(classes[i]) == 2:
+            new_classes[i] += classes[i]
+            positives_count[i] = 2
+        else:
+            while added < positives_count[i]:
+                candidate = random.choice(classes[i])
+                if candidate not in existing_set:
+                    new_classes[i].append(candidate)
+                    existing_set.add(candidate)
+                    added += 1
+
+    for i in range(len(new_classes)):
+        existing_set = set(new_classes[i]).union(set(classes[i]))  # to ensure uniqueness
+
+        # Pick 'classes_count[i]' number of classes from weighted_classes, skipping duplicates
+        added = 0
+        while added < negatives_count[i]:
+            candidate = random.choice(weighted_classes)
+            if candidate not in existing_set:
+                new_classes[i].append(candidate)
+                existing_set.add(candidate)
+                added += 1
+    return new_classes
+
+
+def generate_classes_llm_negatives(llm_negatives, positives):
+    new_classes = [[] for _ in range(len(positives))]
+    for i in range(len(positives)):
+        selected_positive = random.choice(positives[i])
+        new_classes[i] = [selected_positive]
+
+    for i in range(len(new_classes)):
+        existing_set = set(new_classes[i]).union(set(positives[i]))  # to ensure uniqueness
+        if new_classes[i][0] not in llm_negatives[i]:
+            break_flag = False
+            for positive_classes in positives:
+                for positive in positive_classes:
+                    if positive not in existing_set:
+                        new_classes[i].append(positive)
+                        break_flag = True
+                        break
+                if break_flag:
+                    break
+            continue
+        negatives = llm_negatives[i][new_classes[i][0]]
+        for negative_class in negatives:
+            if negative_class not in existing_set:
+                new_classes[i].append(negative_class)
+                existing_set.add(negative_class)
+
+    return new_classes
+
+
+def shuffle_classes(classes, positives):
+    rng = np.random.default_rng()
+    labels = [[] for _ in range(len(classes))]
+    for i, sample_classes in enumerate(classes):
+        for sample_class in sample_classes:
+            if sample_class in positives[i]:
+                labels[i].append(1)
+            else:
+                labels[i].append(0)
+
+    for i, sample_classes in enumerate(classes):
+        permutation = rng.permutation(len(sample_classes))
+        classes[i] = [sample_classes[k] for k in permutation]
+        labels[i] = [labels[i][k] for k in permutation]
+
+    new_labels = [[] for _ in range(len(classes))]
+    for i, sample_labels in enumerate(labels):
+        for k, sample_label in enumerate(sample_labels):
+            if sample_label == 1:
+                new_labels[i].append(k)
+    return classes, new_labels
+
+
+def generate_classes_task_creation(batch):
+    new_classes = [[] for _ in range(len(batch))]
+    for i in range(len(batch)):
+        negative_idx = random.randint(0, 4)
+        new_classes[i] = batch[i][f"negatives_{negative_idx}"]
+
+    return new_classes
+
+
+def generate_classes(classes: list, config: str):
+    if config == "multiclass":
+        new_classes = generate_classes_multiclass(classes)
+    else:
+        new_classes = generate_classes_multilabel(classes)
+
+    new_classes, labels = shuffle_classes(new_classes.copy(), classes)
+    return new_classes, labels
