@@ -7,7 +7,9 @@ def make_classifier_prompt(
     input_seq: ndarray,
     special_token_ids: dict[int],
     classes_list: list[ndarray],
-    positive_labels: list[list[int]] = None,
+    scenario: ndarray = np.array([], dtype=int),
+    starting_prompt: ndarray = np.array([], dtype=int),
+    positive_labels: list[int] = None,
 ) -> tuple[ndarray, ndarray]:
     if positive_labels:
         label_mask = [-2] * len(classes_list)
@@ -26,10 +28,11 @@ def make_classifier_prompt(
             for i, (class_name, mask) in enumerate(zip(classes_list, label_mask))
         ]
     )
-
     result_prompt = np.concatenate(
         [
             [special_token_ids["bos_token"]],
+            starting_prompt,
+            scenario,
             result_prompt,
             [special_token_ids["sep_token"]],
             input_seq,
@@ -40,9 +43,11 @@ def make_classifier_prompt(
     extended_label_mask = np.concatenate(
         [
             np.array([-4]),
+            np.full(len(starting_prompt), -5, dtype=int),
+            np.full(len(scenario), -5, dtype=int),
             extended_label_mask,
             np.array([-4]),
-            np.full(len(input_seq), -3),
+            np.full(len(input_seq), -3, dtype=int),
             np.array([-4]),
         ]
     )
@@ -61,7 +66,6 @@ def prepare_batch(
     max_len = max(len(res_prompt) for res_prompt in result_prompts)
     if model_max_length is not None:
         max_len = min(max_len, model_max_length)
-
     input_ids = torch.full((batch_size, max_len), pad_token_id, dtype=torch.long)
     attention_mask = torch.zeros((batch_size, max_len), dtype=torch.long)
     classes_mask = torch.full((batch_size, max_len), -4, dtype=torch.long)
@@ -85,9 +89,11 @@ def prepare_batch(
     return input_ids, attention_mask, classes_mask
 
 
-def prepare_inference_batch(input_texts, classes, tokenizer):
+def prepare_inference_batch(input_texts, classes, tokenizer, input_prompt=None):
     tokenized_texts = tokenizer(input_texts, add_special_tokens=False).input_ids
     tokenized_classes = [tokenizer(sample_classes, add_special_tokens=False).input_ids for sample_classes in classes]
+    if input_prompt:
+        tokenized_prompt = tokenizer(input_prompt, add_special_tokens=False).input_ids
 
     result_prompts = []
     label_masks = []
@@ -98,9 +104,12 @@ def prepare_inference_batch(input_texts, classes, tokenizer):
         "sep_token": tokenizer.sep_token_id,
         "eos_token": tokenizer.eos_token_id,
     }
-
-    for tokenized_text, tokenized_sample_classes in tokenized_texts:
-        result_prompt, label_mask = make_classifier_prompt(tokenized_text, special_token_ids, tokenized_sample_classes)
+    if input_prompt is None:
+        tokenized_prompt = np.array([], dtype=int)
+    for tokenized_text, tokenized_sample_classes in zip(tokenized_texts, tokenized_classes):
+        result_prompt, label_mask = make_classifier_prompt(
+            tokenized_text, special_token_ids, tokenized_sample_classes, starting_prompt=tokenized_prompt
+        )
 
         result_prompts.append(result_prompt)
         label_masks.append(label_mask)

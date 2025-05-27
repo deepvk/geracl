@@ -1,7 +1,7 @@
 [metadata]
-name = "py_template"
-author = "deepvk"
-url = "https://github.com/deepvk/py_template"
+name = "geracl"
+author = "deepvk, Vyrodov Mikhail"
+url = "https://github.com/deepvk/geracl"
 
 [tool.isort]
 profile = "black"
@@ -23,7 +23,3 @@ warn_unused_ignores = "True"
 allow_redefinition = "True"
 warn_no_return = "False"
 no_implicit_optional = "False"
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = ["--color=yes", "-s"]

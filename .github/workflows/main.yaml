@@ -6,8 +6,8 @@ jobs:
   main:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v3
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
         with:
           python-version: 3.11.6
           cache: "pip"
@@ -18,7 +18,3 @@ jobs:
         run: black . --check --diff --color
       - name: "isort"
         run: isort . --check --diff
-      - name: "mypy"
-        run: mypy
-      - name: "pytests"
-        run: pytest

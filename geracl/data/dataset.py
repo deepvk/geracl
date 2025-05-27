@@ -28,12 +28,21 @@ class ZeroShotClassificationDataset(Dataset):
     def tokenize(self, sample):
         text = sample["text"]
         classes = sample["classes"]
-        labels = sample["labels"]
+        label = sample["labels"]
+        if isinstance(label, int):
+            label = [label]
+        scenario = None
+        if "scenarios" in sample:
+            scenario = sample["scenarios"]
 
         encoded_text = self._tokenizer(text, add_special_tokens=False).input_ids
         encoded_classes = self._tokenizer(classes, add_special_tokens=False).input_ids
-
-        return encoded_text, encoded_classes, labels
+        if scenario is not None:
+            scenario = scenario + ": "
+            encoded_scenario = self._tokenizer(scenario, add_special_tokens=False).input_ids
+            return encoded_text, encoded_classes, label, encoded_scenario
+        else:
+            return encoded_text, encoded_classes, label
 
     def __len__(self):
         return len(self._dataset)

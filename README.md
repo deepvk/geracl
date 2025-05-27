@@ -1,27 +1,77 @@
-# py_template
+# GeRaCl: General Rapid text Classifier
 
-Template repository for Python projects.
-Use it to create a new repo, but feel free to adopt for your use-cases.
+**GeRaCl** is an open‑source **framework** for building, training, and evaluating efficient zero‑shot text classifiers on top of any BERT‑like sentence-encoder. It is inspired by the [GLiNER](https://github.com/urchade/GLiNER/tree/main) framework.
 
-## Structure
+### ✨ Why GeRaCl?
 
-There are several directories to organize your code:
-- `src`: Main directory for your modules, e.g., models or dataset implementations, train loops, metrics.
-- `scripts`: Directory to define scripts to interact with modules, e.g., run training or evaluation, run data preprocessing, collect statistic.
-- `tests`: Directory for tests, this may include multiple unit tests for different parts of logic.
+| Feature                        | What it means for you                                                                             |
+| ------------------------------ | ------------------------------------------------------------------------------------------------- |
+| **Zero‑shot by design**        | Classify with **arbitrary** label sets that you decide at run‑time — just pass a list of strings. |
+| **One forward pass**           | As fast as ordinary text classification; no pairwise loops like in NLI‑based approaches.          |
+| **Model‑agnostic**             | Works with any Hugging Face sentence-encoder.                                                     |
+| **155 M reference checkpoint** | A lean [baseline](https://huggingface.co/deepvk/GeRaCl-USER2-base) (155M parameters) that beats much larger sentence‑encoders (300-500M parameters). |
+| **All‑in‑one toolkit**         | Training/eval scripts, HF Hub and WandB integration.                                              |
 
-You can create new directories for your need.
-For example, you can create a `Notebooks` folder for Jupyter notebooks, such as `EDA.ipynb`.
 
-## Usage
+### 🚀 Quick Start
 
-First of all,
-navigate to [`pyproject.toml`](./pyproject.toml) and set up `name` and `url` properties according to your project.
+Clone and install directly from GitHub:
 
-For correct work of the import system:
-1. Use absolute import statements starting from `src`. For example, `from src.model import MySuperModel`
-2. Execute scripts as modules, i.e. use `python -m scripts.<module_name>`. See details about `-m` flag [here](https://docs.python.org/3/using/cmdline.html#cmdoption-m).
+```bash
+git clone https://github.com/deepvk/zero-shot-classification
+cd GeRaCl
 
-To keep your code clean, use `black`, `isort`, and `mypy`
-(install everything from [`requirements.dev.txt`](./requirements.dev.txt)).
-[`pyproject.toml`](./pyproject.toml) already defines their parameters, but you can change them if you want.
+pip install -r requirements.txt
+```
+
+Verify your installation:
+
+```python
+import geracl
+print(geracl.__version__)
+```
+
+### 🧑‍💻 Usage Examples
+
+#### Single classification scenario
+
+```python
+from transformers import AutoTokenizer
+from geracl import GeraclHF, ZeroShotClassificationPipeline
+
+model = GeraclHF.from_pretrained('deepvk/GeRaCl-USER2-base').to('cuda').eval()
+tokenizer  = AutoTokenizer.from_pretrained('deepvk/GeRaCl-USER2-base')
+
+pipe = ZeroShotClassificationPipeline(model, tokenizer, device="cuda")
+
+text = "Утилизация катализаторов: как неплохо заработать"
+labels = ["экономика", "происшествия", "политика", "культура", "наука", "спорт"]
+result = pipe(text, labels, batch_size=1)[0]
+
+print(labels[result])
+```
+
+#### Multiple classification scenarios
+
+```python
+from transformers import AutoTokenizer
+from geracl import GeraclHF, ZeroShotClassificationPipeline
+
+model = GeraclHF.from_pretrained('deepvk/GeRaCl-USER2-base').to('cuda').eval()
+tokenizer  = AutoTokenizer.from_pretrained('deepvk/GeRaCl-USER2-base')
+
+pipe = ZeroShotClassificationPipeline(model, tokenizer, device="cuda")
+
+texts = [
+  "Утилизация катализаторов: как неплохо заработать",
+  "Мне не понравился этот фильм."
+]
+labels = [
+  ["экономика", "происшествия", "политика", "культура", "наука", "спорт"],
+  ["нейтральный", "позитивный", "негативный"]
+]
+results = pipe(texts, labels, batch_size=2)
+
+for i in range(len(labels)):
+    print(labels[i][results[i]])
+```
