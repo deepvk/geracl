@@ -1,10 +1,10 @@
+import wandb
 import yaml
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from pytorch_lightning.loggers import WandbLogger
 
-import wandb
 from geracl.data.data_module import ZeroShotClassificationDataModule
 from geracl.model.geracl import Geracl
 from geracl.utils import setup_logging

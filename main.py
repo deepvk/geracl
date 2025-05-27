@@ -1,12 +1,12 @@
 from argparse import ArgumentParser
 from collections.abc import Mapping
 
+import wandb
 import yaml
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
-import wandb
 from geracl import Geracl
 from geracl.data.data_module import ZeroShotClassificationDataModule
 
