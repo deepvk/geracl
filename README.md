@@ -1,6 +1,17 @@
 # GeRaCl: General Rapid text Classifier
 
-**GeRaCl** is an efficient, zero-shot text classification model inspired by the [GLiNER](https://github.com/urchade/GLiNER/tree/main) framework. It shows comparable performace to popular sentence-encoder models that have less than 1B parameters while having only 155M parameters. Also, it is more efficient than most popular NLI-tuned zero-shot classifiers because GeRaCl performs classification in a single forward pass.
+**GeRaCl** is an open‑source **framework** for building, training, and evaluating efficient zero‑shot text classifiers on top of any BERT‑like sentence-encoder. It is inspired by the [GLiNER](https://github.com/urchade/GLiNER/tree/main) framework.
+
+### ✨ Why GeRaCl?
+
+| Feature                        | What it means for you                                                                             |
+| ------------------------------ | ------------------------------------------------------------------------------------------------- |
+| **Zero‑shot by design**        | Classify with **arbitrary** label sets that you decide at run‑time — just pass a list of strings. |
+| **One forward pass**           | As fast as ordinary text classification; no pairwise loops like in NLI‑based approaches.          |
+| **Model‑agnostic**             | Works with any Hugging Face sentence-encoder.                                                     |
+| **155 M reference checkpoint** | A lean [baseline](https://huggingface.co/deepvk/GeRaCl-USER2-base) (155M parameters) that beats much larger sentence‑encoders (300-500M parameters). |
+| **All‑in‑one toolkit**         | Training/eval scripts, HF Hub and WandB integration.                                              |
+
 
 ### 🚀 Quick Start
 
@@ -59,7 +70,7 @@ labels = [
   ["экономика", "происшествия", "политика", "культура", "наука", "спорт"],
   ["нейтральный", "позитивный", "негативный"]
 ]
-results = pipe(texts, labels, batch_size=1)
+results = pipe(texts, labels, batch_size=2)
 
 for i in range(len(labels)):
     print(labels[i][results[i]])
