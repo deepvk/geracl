@@ -1,7 +1,7 @@
 [metadata]
-name = "py_template"
-author = "deepvk"
-url = "https://github.com/deepvk/py_template"
+name = "geracl"
+author = "deepvk, Vyrodov Mikhail"
+url = "https://github.com/deepvk/geracl"
 
 [tool.isort]
 profile = "black"

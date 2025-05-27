@@ -35,7 +35,7 @@ def generate_classes_multiclass(classes):
     derangement = random_derangement(len(classes))
 
     fixed = True
-    max_attempts = 100
+    max_attempts = 200
     attempts = 0
 
     while True:
@@ -56,7 +56,6 @@ def generate_classes_multiclass(classes):
         # Break if no collisions or we tried too many times
         if fixed or attempts >= max_attempts:
             if attempts >= max_attempts:
-                # print(classes)
                 raise Exception(
                     "Could not distribute one positive class from each sample to different samples without repetition of classes."
                 )
@@ -68,7 +67,6 @@ def generate_classes_multiclass(classes):
     for i in range(len(new_classes)):
         existing_set = set(new_classes[i]).union(set(classes[i]))  # to ensure uniqueness
 
-        # Pick 'classes_count[i]' number of classes from weighted_classes, skipping duplicates
         added = 0
         while added < negatives_count[i]:
             candidate = random.choice(weighted_classes)
@@ -103,7 +101,6 @@ def generate_classes_multilabel(classes):
     for i in range(len(new_classes)):
         existing_set = set(new_classes[i]).union(set(classes[i]))  # to ensure uniqueness
 
-        # Pick 'classes_count[i]' number of classes from weighted_classes, skipping duplicates
         added = 0
         while added < negatives_count[i]:
             candidate = random.choice(weighted_classes)
@@ -114,40 +111,13 @@ def generate_classes_multilabel(classes):
     return new_classes
 
 
-def generate_classes_llm_negatives(llm_negatives, positives):
-    new_classes = [[] for _ in range(len(positives))]
-    for i in range(len(positives)):
-        selected_positive = random.choice(positives[i])
-        new_classes[i] = [selected_positive]
-
-    for i in range(len(new_classes)):
-        existing_set = set(new_classes[i]).union(set(positives[i]))  # to ensure uniqueness
-        if new_classes[i][0] not in llm_negatives[i]:
-            break_flag = False
-            for positive_classes in positives:
-                for positive in positive_classes:
-                    if positive not in existing_set:
-                        new_classes[i].append(positive)
-                        break_flag = True
-                        break
-                if break_flag:
-                    break
-            continue
-        negatives = llm_negatives[i][new_classes[i][0]]
-        for negative_class in negatives:
-            if negative_class not in existing_set:
-                new_classes[i].append(negative_class)
-                existing_set.add(negative_class)
-
-    return new_classes
-
-
 def shuffle_classes(classes, positives):
     rng = np.random.default_rng()
     labels = [[] for _ in range(len(classes))]
     for i, sample_classes in enumerate(classes):
+        lower_positives = [positive.lower() for positive in positives[i]]
         for sample_class in sample_classes:
-            if sample_class in positives[i]:
+            if sample_class.lower() in lower_positives:
                 labels[i].append(1)
             else:
                 labels[i].append(0)
@@ -165,19 +135,35 @@ def shuffle_classes(classes, positives):
     return classes, new_labels
 
 
-def generate_classes_task_creation(batch):
+def choose_synthetic_classes(batch, include_scenarios=False) -> list | tuple[list, list]:
     new_classes = [[] for _ in range(len(batch))]
+    if include_scenarios:
+        scenarios = []
     for i in range(len(batch)):
-        negative_idx = random.randint(0, 4)
-        new_classes[i] = batch[i][f"negatives_{negative_idx}"]
-
-    return new_classes
+        negative_ids = [0, 1, 2, 3, 4]
+        negative_idx = random.choice(negative_ids)
+        while not batch[i][f"classes_{negative_idx}"]:
+            negative_ids.remove(negative_idx)
+            negative_idx = random.choice(negative_ids)
+        new_classes[i] = batch[i][f"classes_{negative_idx}"]
+        if include_scenarios:
+            scenario_idx = 0
+            for k in range(negative_idx):
+                if not batch[i][f"classes_{negative_idx}"]:
+                    continue
+                else:
+                    scenario_idx += 1
+            scenarios.append(batch[i]["scenarios"][scenario_idx])
+    if include_scenarios:
+        return new_classes, scenarios
+    else:
+        return new_classes
 
 
 def generate_classes(classes: list, config: str):
-    if config == "multiclass":
+    if config == "synthetic_positives_multiclass":
         new_classes = generate_classes_multiclass(classes)
-    else:
+    elif config == "synthetic_positives_multilabel":
         new_classes = generate_classes_multilabel(classes)
 
     new_classes, labels = shuffle_classes(new_classes.copy(), classes)

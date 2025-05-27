@@ -1,0 +1,28 @@
+model:
+  embedder_name: "deepvk/USER2-base"
+  ffn_dim: 2048
+  device: "cuda"
+  unfreeze_embedder: False
+  pooling_type: "mean"
+  loss_args:
+     loss_type: "bce"
+
+data_module:
+  batch_size: 16
+  val_batch_size: 16
+  num_workers: 10
+  tokenizer_name: "deepvk/USER2-base"
+  config: "synthetic_positives_multiclass"
+  include_scenarios: False
+  input_prompt: "classification: "
+
+trainer:
+#  max_steps: 200
+  accelerator: "gpu"
+  val_check_interval: 1000
+  gradient_clip_val: 0.0
+  log_every_n_steps: 100
+
+other:
+  wandb_project: "universal_classifier"
+  checkpoints_dir: "/data/checkpoints"

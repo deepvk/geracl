@@ -1,27 +1,66 @@
-# py_template
+# GeRaCl: General Rapid text Classifier
 
-Template repository for Python projects.
-Use it to create a new repo, but feel free to adopt for your use-cases.
+**GeRaCl** is an efficient, zero-shot text classification model inspired by the [GLiNER](https://github.com/urchade/GLiNER/tree/main) framework. It shows comparable performace to popular sentence-encoder models that have less than 1B parameters while having only 155M parameters. Also, it is more efficient than most popular NLI-tuned zero-shot classifiers because GeRaCl performs classification in a single forward pass.
 
-## Structure
+### 🚀 Quick Start
 
-There are several directories to organize your code:
-- `src`: Main directory for your modules, e.g., models or dataset implementations, train loops, metrics.
-- `scripts`: Directory to define scripts to interact with modules, e.g., run training or evaluation, run data preprocessing, collect statistic.
-- `tests`: Directory for tests, this may include multiple unit tests for different parts of logic.
+Clone and install directly from GitHub:
 
-You can create new directories for your need.
-For example, you can create a `Notebooks` folder for Jupyter notebooks, such as `EDA.ipynb`.
+```bash
+git clone https://github.com/deepvk/zero-shot-classification
+cd GeRaCl
 
-## Usage
+pip install -r requirements.txt
+```
 
-First of all,
-navigate to [`pyproject.toml`](./pyproject.toml) and set up `name` and `url` properties according to your project.
+Verify your installation:
 
-For correct work of the import system:
-1. Use absolute import statements starting from `src`. For example, `from src.model import MySuperModel`
-2. Execute scripts as modules, i.e. use `python -m scripts.<module_name>`. See details about `-m` flag [here](https://docs.python.org/3/using/cmdline.html#cmdoption-m).
+```python
+import geracl
+print(geracl.__version__)
+```
 
-To keep your code clean, use `black`, `isort`, and `mypy`
-(install everything from [`requirements.dev.txt`](./requirements.dev.txt)).
-[`pyproject.toml`](./pyproject.toml) already defines their parameters, but you can change them if you want.
+### 🧑‍💻 Usage Examples
+
+#### Single classification scenario
+
+```python
+from transformers import AutoTokenizer
+from geracl import GeraclHF, ZeroShotClassificationPipeline
+
+model = GeraclHF.from_pretrained('deepvk/GeRaCl-USER2-base').to('cuda').eval()
+tokenizer  = AutoTokenizer.from_pretrained('deepvk/GeRaCl-USER2-base')
+
+pipe = ZeroShotClassificationPipeline(model, tokenizer, device="cuda")
+
+text = "Утилизация катализаторов: как неплохо заработать"
+labels = ["экономика", "происшествия", "политика", "культура", "наука", "спорт"]
+result = pipe(text, labels, batch_size=1)[0]
+
+print(labels[result])
+```
+
+#### Multiple classification scenarios
+
+```python
+from transformers import AutoTokenizer
+from geracl import GeraclHF, ZeroShotClassificationPipeline
+
+model = GeraclHF.from_pretrained('deepvk/GeRaCl-USER2-base').to('cuda').eval()
+tokenizer  = AutoTokenizer.from_pretrained('deepvk/GeRaCl-USER2-base')
+
+pipe = ZeroShotClassificationPipeline(model, tokenizer, device="cuda")
+
+texts = [
+  "Утилизация катализаторов: как неплохо заработать",
+  "Мне не понравился этот фильм."
+]
+labels = [
+  ["экономика", "происшествия", "политика", "культура", "наука", "спорт"],
+  ["нейтральный", "позитивный", "негативный"]
+]
+results = pipe(texts, labels, batch_size=1)
+
+for i in range(len(labels)):
+    print(labels[i][results[i]])
+```

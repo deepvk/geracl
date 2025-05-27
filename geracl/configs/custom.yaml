@@ -1,0 +1,43 @@
+model:
+  embedder_name: "deepvk/USER2-base"
+  ffn_dim: 2048
+  ffn_classes_dropout: 0.4
+  ffn_text_dropout: 0.4
+  device: "cuda"
+  unfreeze_embedder: True
+  loss_args:
+     loss_type: "bce"
+#     init_params:
+#       alpha:
+#       gamma:
+  optimizer_args:
+     class_path: torch.optim.AdamW
+     init_params:
+        lr: 0.000005
+        weight_decay: 0.1
+  scheduler_args:
+     scheduler: "linear"
+     total_steps: 35310
+     warmup_steps: 1000
+
+data_module:
+  batch_size: 32
+  val_batch_size: 32
+  tokenizer_name: "deepvk/USER2-base"
+  config: "real_world_extended_expanded"
+  model_max_length: 2000
+  num_workers: 5
+  include_scenarios: False
+  input_prompt: "classification: "
+
+trainer:
+  accelerator: "gpu"
+  val_check_interval: 7062
+  max_epochs: 5
+  log_every_n_steps: 100
+  # gradient_clip_val: 2.0
+  #accumulate_grad_batches: 2
+  # overfit_batches: 50
+
+other:
+  checkpoints_dir: "/data/checkpoints/release_user2_base_training"

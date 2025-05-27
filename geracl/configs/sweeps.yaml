@@ -19,7 +19,7 @@ data_module:
 trainer:
 #  max_steps: 200
   accelerator: "gpu"
-  val_check_interval: 5810
+  val_check_interval: 50
   gradient_clip_val: 0.0
   log_every_n_steps: 50
 

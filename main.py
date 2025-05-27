@@ -1,15 +1,14 @@
 from argparse import ArgumentParser
 from collections.abc import Mapping
 
-import wandb
 import yaml
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
-from src.data.data_module import ZeroShotClassificationDataModule
-from src.model.universal_classifier import ZeroShotClassifier
-from src.utils import setup_logging
+import wandb
+from geracl import Geracl
+from geracl.data.data_module import ZeroShotClassificationDataModule
 
 
 def merge_configs(default, override):
@@ -51,7 +50,6 @@ if __name__ == "__main__":
         config = load_config_with_defaults(_args.config_path, default_config)
 
     seed_everything(seed)
-    setup_logging()
 
     wandb_logger = WandbLogger(project=config["other"]["wandb_project"])
     checkpoint_callback = ModelCheckpoint(
@@ -65,7 +63,7 @@ if __name__ == "__main__":
     lr_logger = LearningRateMonitor("step")
 
     data_module = ZeroShotClassificationDataModule(**config["data_module"])
-    model = ZeroShotClassifier(**config["model"], tokenizer_len=len(data_module.tokenizer))
+    model = Geracl(**config["model"], tokenizer_len=len(data_module.tokenizer))
 
     trainer = Trainer(
         **config["trainer"],
