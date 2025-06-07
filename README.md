@@ -18,8 +18,8 @@
 Clone and install directly from GitHub:
 
 ```bash
-git clone https://github.com/deepvk/zero-shot-classification
-cd GeRaCl
+git clone https://github.com/deepvk/geracl
+cd geracl
 
 pip install -r requirements.txt
 ```
