@@ -11,6 +11,7 @@ class GeraclHF(PreTrainedModel):
         super().__init__(config)
         self._classification_core = GeraclCore(
             embedder_name=config.embedder_name,
+            embedder_config=config.embedder_config,
             ffn_dim=config.ffn_dim,
             ffn_classes_dropout=config.ffn_classes_dropout,
             ffn_text_dropout=config.ffn_text_dropout,

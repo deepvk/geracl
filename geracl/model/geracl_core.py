@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from torch import Tensor
-from transformers import AutoModel
+from transformers import AutoModel, PretrainedConfig
 
 
 class GeraclCore(nn.Module):
@@ -24,6 +24,7 @@ class GeraclCore(nn.Module):
         tokenizer_len: int,
         pooling_type: str = "mean",
         loss_args: dict = None,
+        embedder_config: PretrainedConfig | None = None,
     ):
         """
         :param embedder_name: name of pretrained HuggingFace model to embed tokens.
@@ -40,22 +41,25 @@ class GeraclCore(nn.Module):
         self._pooling_type = pooling_type
 
         self._device = device
-        self._token_embedder = AutoModel.from_pretrained(embedder_name).to(self._device)
-        self._token_embedder.resize_token_embeddings(tokenizer_len)
+        if embedder_config is not None:
+            self._token_embedder = AutoModel.from_config(embedder_config)
+        else:
+            self._token_embedder = AutoModel.from_pretrained(embedder_name).to(self._device)
+            self._token_embedder.resize_token_embeddings(tokenizer_len)
 
         self._mlp_classes = nn.Sequential(
             nn.Linear(self._token_embedder.config.hidden_size, ffn_dim),
             nn.Dropout(ffn_classes_dropout),
             nn.GELU(),
             nn.Linear(ffn_dim, self._token_embedder.config.hidden_size),
-        ).to(self._device)
+        )
 
         self._mlp_text = nn.Sequential(
             nn.Linear(self._token_embedder.config.hidden_size, ffn_dim),
             nn.Dropout(ffn_text_dropout),
             nn.GELU(),
             nn.Linear(ffn_dim, self._token_embedder.config.hidden_size),
-        ).to(self._device)
+        )
 
     def _get_text_embeddings(
         self,
