@@ -19,7 +19,7 @@ Clone and install directly from GitHub:
 
 ```bash
 git clone https://github.com/deepvk/zero-shot-classification
-cd GeRaCl
+cd zero-shot-classification
 
 pip install -r requirements.txt
 ```
